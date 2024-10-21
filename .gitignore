@@ -1,0 +1,24 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+**/.DS_Store/
+**/.idea/
+**/.vscode/
+**/build/
+
+
+bin/
+*.h5
+*.out
+.sconsign.dblite
+heartbeat

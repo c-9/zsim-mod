@@ -710,7 +710,6 @@ static Section FindSection(const char* sec) {
 // Initialization code and global per-process data
 enum VdsoFunc {VF_CLOCK_GETTIME, VF_GETTIMEOFDAY, VF_TIME, VF_GETCPU};
 
-//vdso RTN address->VdsoFunc(VF_CLOCK_GETTIME,VF_GETTIMEOFDAY,VF_TIME,VF_GETCPU)
 static std::unordered_map<ADDRINT, VdsoFunc> vdsoEntryMap;
 static uintptr_t vdsoStart;
 static uintptr_t vdsoEnd;
@@ -720,58 +719,46 @@ static uintptr_t vsyscallStart;
 static uintptr_t vsyscallEnd;
 static bool vsyscallWarned = false;
 
-void VdsoInsertFunc(IMG vi, const char* fName, VdsoFunc func) {
-    ADDRINT baseAddr = IMG_LowAddress(vi);	//get the lowest address of vi
-    RTN rtn = RTN_FindByName(vi, fName);	//search RTN according to fName in vi(img)
-    if (rtn == RTN_Invalid()) {
+// Helper function from parse_vsdo.cpp
+extern void vdso_init_from_sysinfo_ehdr(uintptr_t base);
+extern void *vdso_sym(const char *version, const char *name);
+
+void VdsoInsertFunc(const char* fName, VdsoFunc func) {
+    ADDRINT vdsoFuncAddr = (ADDRINT) vdso_sym("LINUX_2.6", fName);
+    if (vdsoFuncAddr == 0) {
         warn("Did not find %s in vDSO", fName);
     } else {
-		//get address in memory of rtn
-        ADDRINT rtnAddr = RTN_Address(rtn) - baseAddr + vdsoStart;
-        vdsoEntryMap[rtnAddr] = func;
+        vdsoEntryMap[vdsoFuncAddr] = func;
     }
 }
 
 void VdsoInit() {
-	//get vdso section
     Section vdso = FindSection("vdso");
-    vdsoStart = vdso.start;	//start address of vdso(my machine: it's 7ffffa9ff000) 
-    vdsoEnd = vdso.end;	//end address of vdso( my machine: it's 7ffffaa00000)
+    vdsoStart = vdso.start;
+    vdsoEnd = vdso.end;
+
     if (!vdsoEnd) {
         // Non-fatal, but should not happen --- even static binaries get vDSO AFAIK
         warn("vDSO not found");
         return;
     }
-    // Write it out
-    std::stringstream file_ss;
-    file_ss << zinfo->outputDir << "/vdso.dso." << procIdx;
-    const char* file = file_ss.str().c_str();
-    FILE* vf = fopen(file, "w");
-	//write content of vdso to vdso.dso.procidx
-    fwrite(reinterpret_cast<void*>(vdso.start), 1, vdsoEnd-vdsoStart, vf);
-    fclose(vf);
-    // Load it and analyze it
-	// load vdso file
-    IMG vi = IMG_Open(file);
-    if (!IMG_Valid(vi)) panic("Loaded vDSO not valid");
-	//only clock_gettime, gettimeofday , time , getcpu syscalls use vdso for entering system calls fast
-    VdsoInsertFunc(vi, "clock_gettime", VF_CLOCK_GETTIME);
-    VdsoInsertFunc(vi, "__vdso_clock_gettime", VF_CLOCK_GETTIME);
 
-    VdsoInsertFunc(vi, "gettimeofday", VF_GETTIMEOFDAY);
-    VdsoInsertFunc(vi, "__vdso_gettimeofday", VF_GETTIMEOFDAY);
+    vdso_init_from_sysinfo_ehdr(vdsoStart);
 
-    VdsoInsertFunc(vi, "time", VF_TIME);
-    VdsoInsertFunc(vi, "__vdso_time", VF_TIME);
+    VdsoInsertFunc("clock_gettime", VF_CLOCK_GETTIME);
+    VdsoInsertFunc("__vdso_clock_gettime", VF_CLOCK_GETTIME);
 
-    VdsoInsertFunc(vi, "getcpu", VF_GETCPU);
-    VdsoInsertFunc(vi, "__vdso_getcpu", VF_GETCPU);
+    VdsoInsertFunc("gettimeofday", VF_GETTIMEOFDAY);
+    VdsoInsertFunc("__vdso_gettimeofday", VF_GETTIMEOFDAY);
+
+    VdsoInsertFunc("time", VF_TIME);
+    VdsoInsertFunc("__vdso_time", VF_TIME);
+
+    VdsoInsertFunc("getcpu", VF_GETCPU);
+    VdsoInsertFunc("__vdso_getcpu", VF_GETCPU);
 
     info("vDSO info initialized");
-    IMG_Close(vi);
-    remove(file);
-	//find address arrangement of vsyscall
-	//my machine(ffffffffff600000-ffffffffff601000)
+
     Section vsyscall = FindSection("vsyscall");
     vsyscallStart = vsyscall.start;
     vsyscallEnd = vsyscall.end;
@@ -793,9 +780,9 @@ struct VdsoPatchData {
 };
 VdsoPatchData vdsoPatchData[MAX_THREADS];
 
-// Analysis functions , init VdsoPatchData structure for each thread
+// Analysis functions
+
 VOID VdsoEntryPoint(THREADID tid, uint32_t func, ADDRINT arg0, ADDRINT arg1) {
-	//if vdsoPatchData level is 0: invalid
     if (vdsoPatchData[tid].level) {
         // common, in Ubuntu 11.10 several vdso functions jump back to the callpoint
         // info("vDSO function (%d) called from vdso (%d), level %d, skipping", func, vdsoPatchData[tid].func, vdsoPatchData[tid].level);
@@ -808,7 +795,6 @@ VOID VdsoEntryPoint(THREADID tid, uint32_t func, ADDRINT arg0, ADDRINT arg1) {
 }
 
 VOID VdsoCallPoint(THREADID tid) {
-	//level=0,invalid
     assert(vdsoPatchData[tid].level);
     vdsoPatchData[tid].level++;
     // info("vDSO internal callpoint, now level %d", vdsoPatchData[tid].level); //common
@@ -824,28 +810,23 @@ VOID VdsoRetPoint(THREADID tid, REG* raxPtr) {
         // info("vDSO return post level %d, skipping ret handling", vdsoPatchData[tid].level); //common
         return;
     }
-	//call function getcpu
     if (fPtrs[tid].type != FPTR_NOP || vdsoPatchData[tid].func == VF_GETCPU) {
         // info("vDSO patching for func %d", vdsoPatchData[tid].func);  // common
         ADDRINT arg0 = vdsoPatchData[tid].arg0;
         ADDRINT arg1 = vdsoPatchData[tid].arg1;
         switch (vdsoPatchData[tid].func) {
             case VF_CLOCK_GETTIME:
-				//simulation of gettime
-                VirtClockGettime(tid, arg0, arg1);	
+                VirtClockGettime(tid, arg0, arg1);
                 break;
-				//simulation of gettimeofday
             case VF_GETTIMEOFDAY:
                 VirtGettimeofday(tid, arg0);
                 break;
-				//simulation of time
             case VF_TIME:
                 VirtTime(tid, raxPtr, arg0);
                 break;
             case VF_GETCPU:
                 {
                 uint32_t cpu = cpuenumCpu(procIdx, getCid(tid));
-				//simulation of getcpu
                 VirtGetcpu(tid, cpu, arg0, arg1);
                 }
                 break;
@@ -857,17 +838,14 @@ VOID VdsoRetPoint(THREADID tid, REG* raxPtr) {
 
 // Instrumentation function, called for EVERY instruction
 VOID VdsoInstrument(INS ins) {
-    ADDRINT insAddr = INS_Address(ins);	//get ins addr
+    ADDRINT insAddr = INS_Address(ins);
     if (unlikely(insAddr >= vdsoStart && insAddr < vdsoEnd)) {
-		//INS is vdso syscall
         if (vdsoEntryMap.find(insAddr) != vdsoEntryMap.end()) {
             VdsoFunc func = vdsoEntryMap[insAddr];
-			//call VdsoEntryPoint function
-			//argv are: tid ,func(IARG_UINT32),arg0(LEVEL_BASE::REG_RDI),arg1(LEVEL_BASE::REG_RSI) 
             INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) VdsoEntryPoint, IARG_THREAD_ID, IARG_UINT32, (uint32_t)func, IARG_REG_VALUE, LEVEL_BASE::REG_RDI, IARG_REG_VALUE, LEVEL_BASE::REG_RSI, IARG_END);
-        } else if (INS_IsCall(ins)) {	//call instruction
+        } else if (INS_IsCall(ins)) {
             INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) VdsoCallPoint, IARG_THREAD_ID, IARG_END);
-        } else if (INS_IsRet(ins)) {	//Ret instruction
+        } else if (INS_IsRet(ins)) {
             INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) VdsoRetPoint, IARG_THREAD_ID, IARG_REG_REFERENCE, LEVEL_BASE::REG_RAX /* return val */, IARG_END);
         }
     }
