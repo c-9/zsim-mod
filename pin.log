@@ -1,0 +1,2 @@
+Pin 2.14 kit 71293
+E:  Unable to load /git-own/hscc/zsim-nvmain/bin/libzsim.so: libboost_regex.so.1.59.0: cannot open shared object file: No such file or directory
