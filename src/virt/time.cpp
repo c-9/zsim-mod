@@ -1,5 +1,5 @@
 /** $glic$
- * Copyright (C) 2012-2014 by Massachusetts Institute of Technology
+ * Copyright (C) 2012-2015 by Massachusetts Institute of Technology
  * Copyright (C) 2010-2013 by The Board of Trustees of Stanford University
  * Copyright (C) 2011 Google Inc.
  *
@@ -197,7 +197,7 @@ PostPatchFn PatchNanosleep(PrePatchArgs args) {
     // Check preconditions
     // FIXME, shouldn't this use safeCopy??
     if (!ts) return NullPostPatch;  // kernel will return EFAULT
-    if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec > 999999999) return NullPostPatch;  // kernel will return EINVAL
+    if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec > 999999999) return false;  // kernel will return EINVAL
 
     uint64_t waitNsec = timespecToNs(*ts);
     if (waitNsec >= offsetNsec) waitNsec -= offsetNsec;

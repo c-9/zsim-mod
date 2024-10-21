@@ -1,5 +1,5 @@
-#include "line_placement.h"
-#include "mc.h"
+#include "banshee/line_placement.h"
+#include "banshee/mc.h"
 #include <stdlib.h>
 
 void

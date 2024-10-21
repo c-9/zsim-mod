@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2012-2014 by Massachusetts Institute of Technology
+ * Copyright (C) 2012-2015 by Massachusetts Institute of Technology
  * Copyright (C) 2010-2013 by The Board of Trustees of Stanford University
  *
  * This file is part of zsim.
@@ -119,6 +119,7 @@ class MemObject : public GlobAlloc {
     public:
         //Returns response cycle
         virtual uint64_t access(MemReq& req) = 0;
+        virtual uint64_t access(MemReq& req, int type, uint32_t data_size) { assert(false); }; // return access(req); };
         virtual void initStats(AggregateStat* parentStat) {}
         virtual const char* getName(){ return NULL; }
 };
