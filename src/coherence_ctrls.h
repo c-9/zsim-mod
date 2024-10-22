@@ -54,8 +54,7 @@ class CC : public GlobAlloc {
         //Inv methods
         virtual void startInv() = 0;
         virtual void endInv(){};
-
-        virtual uint64_t processInv(Address lineAddr, int32_t lineId, InvType type, bool* reqWriteback, uint64_t startCycle, uint32_t srcId) = 0;
+        virtual uint64_t processInv(const InvReq& req, int32_t lineId, uint64_t startCycle) = 0;
 
         //Repl policy interface
         virtual uint32_t numSharers(uint32_t lineId) = 0;
@@ -156,7 +155,7 @@ class MESIBottomCC : public GlobAlloc {
 
         void processWritebackOnAccess(Address lineAddr, uint32_t lineId, AccessType type);
 
-        void processInval(Address lineAddr, uint32_t lineId, InvType type, bool* reqWriteback,uint32_t srcId, uint64_t cycle=0);
+        void processInval(Address lineAddr, uint32_t lineId, InvType type, bool* reqWriteback);
 
         uint64_t processNonInclusiveWriteback(Address lineAddr, AccessType type, uint64_t cycle, MESIState* state, uint32_t srcId, uint32_t flags);
 
@@ -406,18 +405,18 @@ class MESICC : public CC {
 			bcc->unlock();
 		}
 		
+        uint64_t processInv(const InvReq& req, int32_t lineId, uint64_t startCycle) {
+            uint64_t respCycle = tcc->processInval(req.lineAddr, lineId, req.type, req.writeback, startCycle, req.srcId); //send invalidates or downgrades to children
+            bcc->processInval(req.lineAddr, lineId, req.type, req.writeback); //adjust our own state
+            
+            bcc->unlock();
+            return respCycle;
+        }
+
 		MemObject* getParent( Address lineAddr )
 		{
 			return bcc->getParent(lineAddr);
 		}
-
-        uint64_t processInv(Address lineAddr, int32_t lineId, InvType type, bool* reqWriteback, uint64_t startCycle, uint32_t srcId) {
-			//bcc->lock();
-            uint64_t respCycle = tcc->processInval(lineAddr, lineId, type, reqWriteback, startCycle, srcId); //send invalidates or downgrades to children
-            bcc->processInval(lineAddr, lineId, type, reqWriteback,srcId, startCycle); //adjust our own state
-            bcc->unlock();
-            return respCycle;
-        }
 
         //Repl policy interface
         uint32_t numSharers(uint32_t lineId) {return tcc->numSharers(lineId);}
@@ -433,7 +432,7 @@ class MESITerminalCC : public CC {
 
     public:
         //Initialization
-        MESITerminalCC(uint32_t _numLines, const g_string& _name) : bcc(NULL), numLines(_numLines), name(_name) {}
+        MESITerminalCC(uint32_t _numLines, const g_string& _name) : bcc(nullptr), numLines(_numLines), name(_name) {}
 
         void setParents(uint32_t childId, const g_vector<MemObject*>& parents, Network* network) {
             bcc = new MESIBottomCC(numLines, childId, false /*inclusive*/);
@@ -461,6 +460,7 @@ class MESITerminalCC : public CC {
             }
 
             bcc->lock();
+
             /* The situation is now stable, true race-wise. No one can touch the child state, because we hold
              * both parent's locks. So, we first handle races, which may cause us to skip the access.
              */
@@ -505,16 +505,15 @@ class MESITerminalCC : public CC {
 			bcc->unlock();
 		}
 
+        uint64_t processInv(const InvReq& req, int32_t lineId, uint64_t startCycle) {
+            bcc->processInval(req.lineAddr, lineId, req.type, req.writeback); //adjust our own state
+            bcc->unlock();
+            return startCycle; //no extra delay in terminal caches
+        }
+
 		MemObject* getParent( Address lineAddr)
 		{
 			return bcc->getParent(lineAddr);
-		}
-
-        uint64_t processInv(Address lineAddr, int32_t lineId, InvType type, bool* reqWriteback, uint64_t startCycle, uint32_t srcId) 
-		{
-            bcc->processInval(lineAddr, lineId, type, reqWriteback, srcId, startCycle); //adjust our own state
-            bcc->unlock();
-            return startCycle; //no extra delay in terminal caches
 		}
 
         //Repl policy interface

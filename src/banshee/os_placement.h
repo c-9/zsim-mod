@@ -1,6 +1,6 @@
 #pragma once
 #include "memory_hierarchy.h"
-#include "mc.h"
+#include "banshee/mc.h"
 
 class DramCache;
 

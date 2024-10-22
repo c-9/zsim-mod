@@ -1,5 +1,5 @@
-#include "page_placement.h"
-#include "mc.h"
+#include "banshee/page_placement.h"
+#include "banshee/mc.h"
 #include <stdlib.h>
 #include <iostream>
 

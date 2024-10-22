@@ -28,18 +28,24 @@
 
 #include "g_std/g_vector.h"
 #include "memory_hierarchy.h"
-#include "phase_slab_alloc.h"
+#include "pad.h"
+#include "slab_alloc.h"
 
 class TimingEvent;
 
 // Encodes an event that the core should capture for the contention simulation
-struct TimingRecord {
+struct TimingRecord 
+{
+public:
     Address addr;
     uint64_t reqCycle;
     uint64_t respCycle;
     AccessType type;
     TimingEvent* startEvent;
     TimingEvent* endEvent;
+
+    bool isValid() const { return startEvent; }
+    void clear() { startEvent = nullptr; }
 };
 
 //class CoreRecorder;
@@ -48,10 +54,9 @@ typedef g_vector<CrossingEvent*> CrossingStack;
 
 class EventRecorder : public GlobAlloc {
     private:
-        PhaseSlabAlloc slabAlloc;
-        g_vector<TimingRecord> trStack;
+        slab::SlabAlloc slabAlloc;
+        TimingRecord tr;
         CrossingStack crossingStack;
-        //CoreRecorder* coreRec;
         uint32_t srcId;
 
         volatile uint64_t lastGapCycles;
@@ -60,7 +65,9 @@ class EventRecorder : public GlobAlloc {
         PAD();
 
     public:
-        EventRecorder() {}
+        EventRecorder() {
+            tr.clear();
+        }
 
         //Alloc interface
 
@@ -73,30 +80,23 @@ class EventRecorder : public GlobAlloc {
             return slabAlloc.alloc(sz);
         }
 
-        void advance(uint64_t prodCycle, uint64_t usedCycle) {
-            slabAlloc.advance(prodCycle, usedCycle);
-        }
-
         //Event recording interface
 
-        void pushRecord(const TimingRecord& tr) {
-            trStack.push_back(tr);
+        void pushRecord(const TimingRecord& rec) {
+            assert(!tr.isValid());
+            tr = rec;
+            assert(tr.isValid());
         }
 
-        void popRecord() {
-            trStack.pop_back();
+        // Inline to avoid extra copy
+        inline TimingRecord popRecord() __attribute__((always_inline)) {
+            TimingRecord rec = tr;
+            tr.clear();
+            return rec;
         }
 
-        inline size_t numRecords() const {
-            return trStack.size();
-        }
-
-        TimingRecord getRecord(size_t num) {
-            return trStack[num];
-        }
-
-        inline void clearRecords() {
-            trStack.clear();
+        inline size_t hasRecord() const {
+            return tr.isValid();
         }
 
         //Called by crossing events

@@ -114,12 +114,10 @@ void TimingCache::initStats(AggregateStat* parentStat) {
 uint64_t TimingCache::access(MemReq& req) {
     EventRecorder* evRec = zinfo->eventRecorders[req.srcId];
     assert_msg(evRec, "TimingCache is not connected to TimingCore");
-    uint32_t initialRecords = evRec->numRecords();
 
-    bool hasWritebackRecord = false;
-    TimingRecord writebackRecord;
-    bool hasAccessRecord = false;
-    TimingRecord accessRecord;
+    TimingRecord writebackRecord, accessRecord;
+    writebackRecord.clear();
+    accessRecord.clear();
     uint64_t evDoneCycle = 0;
     
     uint64_t respCycle = req.cycle;
@@ -143,30 +141,21 @@ uint64_t TimingCache::access(MemReq& req) {
 
             array->postinsert(req.lineAddr, &req, lineId); //do the actual insertion. NOTE: Now we must split insert into a 2-phase thing because cc unlocks us.
 
-            if (evRec->numRecords() > initialRecords) {
-                assert_msg(evRec->numRecords() == initialRecords + 1, "evRec records on eviction %ld", evRec->numRecords());
-                writebackRecord = evRec->getRecord(initialRecords);
-                hasWritebackRecord = true;
-                evRec->popRecord();
-            }
+            if (evRec->hasRecord()) writebackRecord = evRec->popRecord();
         }
 
         uint64_t getDoneCycle = respCycle;
         respCycle = cc->processAccess(req, lineId, respCycle, &getDoneCycle);
 
-        if (evRec->numRecords() > initialRecords) {
-            assert_msg(evRec->numRecords() == initialRecords + 1, "evRec records %ld", evRec->numRecords());
-            accessRecord = evRec->getRecord(initialRecords);
-            hasAccessRecord = true;
-            evRec->popRecord();
-        }
+        if (evRec->hasRecord()) accessRecord = evRec->popRecord();
+        
         // At this point we have all the info we need to hammer out the timing record
-        TimingRecord tr = {req.lineAddr << lineBits, req.cycle, respCycle, req.type, NULL, NULL}; //note the end event is the response, not the wback
+        TimingRecord tr = {req.lineAddr << lineBits, req.cycle, respCycle, req.type, nullptr, nullptr}; //note the end event is the response, not the wback
 
         if (getDoneCycle - req.cycle == accLat) {
             // Hit
-            assert(!hasWritebackRecord);
-            assert(!hasAccessRecord);
+            assert(!writebackRecord.isValid());
+            assert(!accessRecord.isValid());
             uint64_t hitLat = respCycle - req.cycle; // accLat + invLat
             HitEvent* ev = new (evRec) HitEvent(this, hitLat, domain);
             ev->setMinStartCycle(req.cycle);
@@ -222,12 +211,14 @@ uint64_t TimingCache::access(MemReq& req) {
             };
 
             // Get path
-            connect(hasAccessRecord? &accessRecord : NULL, mse, mre, req.cycle + accLat, getDoneCycle);
+			//printf("Here. accessRecord.respCycle=%ld, endCycle=%ld\n", accessRecord.respCycle, getDoneCycle);
+            connect(accessRecord.isValid()? &accessRecord : nullptr, mse, mre, req.cycle + accLat, getDoneCycle);
+			//printf("Here 222\n");
             mre->addChild(mwe, evRec);
 
             // Eviction path
             if (evDoneCycle) {
-                connect(hasWritebackRecord? &writebackRecord : NULL, mse, mwe, req.cycle + accLat, evDoneCycle);
+                connect(writebackRecord.isValid()? &writebackRecord : nullptr, mse, mwe, req.cycle + accLat, evDoneCycle);
             }
 
             // Replacement path
@@ -318,7 +309,6 @@ void TimingCache::simulateHit(HitEvent* ev, uint64_t cycle) {
     }
 }
 
-
 void TimingCache::simulateMissStart(MissStartEvent* ev, uint64_t cycle) {
     if (activeMisses < numMSHRs) {
         activeMisses++;
@@ -335,6 +325,9 @@ void TimingCache::simulateMissStart(MissStartEvent* ev, uint64_t cycle) {
 }
 
 void TimingCache::simulateMissResponse(MissResponseEvent* ev, uint64_t cycle, MissStartEvent* mse) {
+	//assert(cycle - mse->startCycle < (1 << 30) );
+	// XXX HACK
+	if (cycle > mse->startCycle)
     profMissRespLat.inc(cycle - mse->startCycle);
     ev->done(cycle);
 }
@@ -343,6 +336,7 @@ void TimingCache::simulateMissWriteback(MissWritebackEvent* ev, uint64_t cycle, 
     uint64_t lookupCycle = tryLowPrioAccess(cycle);
     if (lookupCycle) { //success, release MSHR
         assert(activeMisses);
+		if (cycle > mse->startCycle)
         profMissLat.inc(cycle - mse->startCycle);
         activeMisses--;
         profOccHist.transition(activeMisses, lookupCycle);

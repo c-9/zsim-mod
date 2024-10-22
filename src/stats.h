@@ -85,7 +85,7 @@ class Stat : public GlobAlloc {
         const char* _desc;
 
     public:
-        Stat() : _name(NULL), _desc(NULL) {}
+        Stat() : _name(nullptr), _desc(nullptr) {}
 
         virtual ~Stat() {}
 
@@ -132,12 +132,11 @@ class AggregateStat : public Stat {
         //Returns true if it is a non-empty type, false otherwise. Empty types are culled by the parent.
         bool makeImmutable() {
             assert(_isMutable);
-            assert(_name != NULL); //Should have been initialized
+            assert(_name != nullptr); //Should have been initialized
             _isMutable = false;
             g_vector<Stat*>::iterator it;
             g_vector<Stat*> newChildren;
-            for (it = _children.begin(); it != _children.end(); it++)
-			{
+            for (it = _children.begin(); it != _children.end(); it++) {
                 Stat* s = *it;
                 AggregateStat* as = dynamic_cast<AggregateStat*>(s);
                 if (as) {
@@ -169,12 +168,16 @@ class AggregateStat : public Stat {
             assert(!_isMutable);
             return _children[idx];
         }
+
+        // Access-while-mutable interface
+        uint32_t curSize() const {
+            return _children.size();
+        }
+
 };
 
-/*
- * General scalar class
- * FIXME: All other scalar stats should derive from this
- */
+/*  General scalar & vector classes */
+
 class ScalarStat : public Stat {
     public:
         ScalarStat() : Stat() {}
@@ -191,17 +194,17 @@ class VectorStat : public Stat {
         const char** _counterNames;
 
     public:
-        VectorStat() : _counterNames(NULL) {}
+        VectorStat() : _counterNames(nullptr) {}
 
         virtual uint64_t count(uint32_t idx) const = 0;
         virtual uint32_t size() const = 0;
 
         inline bool hasCounterNames() {
-            return (_counterNames != NULL);
+            return (_counterNames != nullptr);
         }
 
         inline const char* counterName(uint32_t idx) const {
-            return (_counterNames == NULL)? NULL : _counterNames[idx];
+            return (_counterNames == nullptr)? nullptr : _counterNames[idx];
         }
 
         virtual void init(const char* name, const char* desc) {
@@ -210,12 +213,12 @@ class VectorStat : public Stat {
 };
 
 
-class Counter : public Stat {
+class Counter : public ScalarStat {
     private:
         uint64_t _count;
 
     public:
-        Counter() : Stat(), _count(0) {}
+        Counter() : ScalarStat(), _count(0) {}
 
         void init(const char* name, const char* desc) {
             initStat(name, desc);
@@ -238,7 +241,7 @@ class Counter : public Stat {
             __sync_fetch_and_add(&_count, 1);
         }
 
-        inline uint64_t count() const {
+        uint64_t get() const {
             return _count;
         }
 
@@ -260,7 +263,7 @@ class VectorCounter : public VectorStat {
             assert(size > 0);
             _counters.resize(size);
             for (uint32_t i = 0; i < size; i++) _counters[i] = 0;
-            _counterNames = NULL;
+            _counterNames = nullptr;
         }
 
         /* With counter names */
@@ -271,6 +274,7 @@ class VectorCounter : public VectorStat {
         }
 
         inline void inc(uint32_t idx, uint64_t value) {
+			//assert(_counters);
             _counters[idx] += value;
         }
 
@@ -319,39 +323,38 @@ class Histogram : public Stat {
 };
 */
 
-class ProxyStat : public Stat {
+class ProxyStat : public ScalarStat {
     private:
         uint64_t* _statPtr;
 
     public:
-        ProxyStat() : Stat(), _statPtr(NULL) {}
+        ProxyStat() : ScalarStat(), _statPtr(nullptr) {}
 
         void init(const char* name, const char* desc, uint64_t* ptr) {
             initStat(name, desc);
             _statPtr = ptr;
         }
 
-        inline uint64_t stat() const {
-            assert(_statPtr); //TBD we may want to make this work only with volatiles...
+        uint64_t get() const {
+            assert(_statPtr);  // TODO: we may want to make this work only with volatiles...
             return *_statPtr;
         }
 };
 
 
-class ProxyFuncStat : public Stat {
+class ProxyFuncStat : public ScalarStat {
     private:
         uint64_t (*_func)();
 
     public:
-        ProxyFuncStat() : Stat(), _func(NULL) {}
+        ProxyFuncStat() : ScalarStat(), _func(nullptr) {}
 
         void init(const char* name, const char* desc, uint64_t (*func)()) {
             initStat(name, desc);
             _func = func;
         }
 
-        //Hmmm, this is a const function but the function pointer we use is not necessarily const. Oh well, it works.
-        inline uint64_t stat() const {
+        uint64_t get() const {
             assert(_func);
             return _func();
         }

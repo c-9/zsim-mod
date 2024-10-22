@@ -1,7 +1,7 @@
 #pragma once
 
 #include "config.h"
-#include "mc.h"
+#include "banshee/mc.h"
 
 class Way;
 class Set; 

@@ -53,12 +53,15 @@ class AggregateStat;
 class StatsBackend;
 class ProcessTreeNode;
 class ProcessStats;
+class ProcStats;
 class EventQueue;
 class ContentionSim;
 class EventRecorder;
 class PinCmd;
 class PortVirtualizer;
 class VectorCounter;
+class AccessTraceWriter;
+class TraceDriver;
 class BaseDRAMBufferManager;
 class BasePageTableWalker;
 class BaseDRAMBufferManager;
@@ -67,6 +70,8 @@ class BuddyAllocator;
 class MemoryNode;
 class BasePaging;
 class Content;
+template <typename T> class g_vector;
+
 struct ClockDomainInfo {
     uint64_t realtimeOffsetNs;
     uint64_t monotonicOffsetNs;
@@ -210,6 +215,12 @@ struct GlobSimInfo {
     volatile bool globalPauseFlag; //if set, pauses simulation on phase end
     volatile bool externalTermPending;
 
+    // Trace writers (stored globally because they need to be deleted when the simulation ends)
+    g_vector<AccessTraceWriter*>* traceWriters;
+
+    // Trace-driven simulation (no cores)
+    bool traceDriven;
+    TraceDriver* traceDriver;
     // NVMain
     bool hasNVMain;
     bool hasDRAMCache;

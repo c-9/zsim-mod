@@ -52,7 +52,7 @@ class TimingCoreEvent : public TimingEvent {
 CoreRecorder::CoreRecorder(uint32_t _domain, g_string& _name)
     : domain(_domain), name(_name + "-rec")
 {
-    prevRespEvent = NULL;
+    prevRespEvent = nullptr;
     state = HALTED;
     gapCycles = 0;
     eventRecorder.setGapCycles(gapCycles);
@@ -116,48 +116,32 @@ void CoreRecorder::notifyLeave(uint64_t curCycle) {
 }
 
 void CoreRecorder::recordAccess(uint64_t startCycle) {
-    assert(eventRecorder.numRecords() <= 2);
-    TimingRecord tr = eventRecorder.getRecord(0);
+    assert(eventRecorder.hasRecord());
+    TimingRecord tr = eventRecorder.popRecord();
     TimingEvent* origPrevResp = prevRespEvent;
 
-    if (tr.type == PUTS || tr.type == PUTX) {
-        //info("Handling PUT+GET");
-        //assert(eventRecorder.numRecords() == 2);
-        TimingRecord tr1 = eventRecorder.getRecord(1);
-        assert(tr1.type == GETX || tr1.type == GETS);
-        assert(startCycle >= prevRespCycle);
-        assert(tr1.reqCycle >= startCycle);
-        assert(tr.reqCycle >= startCycle);
+    assert(startCycle >= prevRespCycle);
+    assert(tr.reqCycle >= startCycle);
 
-        uint64_t delay = startCycle - prevRespCycle;
-        TimingCoreEvent* ev = new (eventRecorder) TimingCoreEvent(delay, prevRespCycle - gapCycles, this);
-        ev->setMinStartCycle(prevRespCycle);
-        prevRespEvent->addChild(ev, eventRecorder);
-        DelayEvent* dr = new (eventRecorder) DelayEvent(tr.reqCycle-startCycle);
-        DelayEvent* dr1 = new (eventRecorder) DelayEvent(tr1.reqCycle-startCycle);
-        dr->setMinStartCycle(startCycle);
-        dr1->setMinStartCycle(startCycle);
-        ev->addChild(dr, eventRecorder)->addChild(tr.startEvent, eventRecorder);
-        ev->addChild(dr1, eventRecorder)->addChild(tr1.startEvent, eventRecorder);
-
-        //tr.endEvent not linked to anything
-        prevRespEvent = tr1.endEvent;
-        prevRespCycle = tr1.respCycle;
-
-    } else {
-        //info("Handling single GET");
-        assert(tr.type == GETX || tr.type == GETS);
-        assert(eventRecorder.numRecords() == 1);
+    if (IsGet(tr.type)) {
         uint64_t delay = tr.reqCycle - prevRespCycle;
         TimingEvent* ev = new (eventRecorder) TimingCoreEvent(delay, prevRespCycle - gapCycles, this);
         ev->setMinStartCycle(prevRespCycle);
         prevRespEvent->addChild(ev, eventRecorder)->addChild(tr.startEvent, eventRecorder);
         prevRespEvent = tr.endEvent;
         prevRespCycle = tr.respCycle;
+        assert(prevRespEvent);
+    } else {
+        assert(IsPut(tr.type));
+        // Link previous response and this req directly (don't even create a new event)
+        DelayEvent* dr = new (eventRecorder) DelayEvent(tr.reqCycle - prevRespCycle);
+        dr->setMinStartCycle(prevRespCycle);
+        prevRespEvent->addChild(dr, eventRecorder)->addChild(tr.startEvent, eventRecorder);
+        //tr.endEvent not linked to anything, it's a PUT
     }
+
     origPrevResp->produceCrossings(&eventRecorder);
     eventRecorder.getCrossingStack().clear();
-    eventRecorder.clearRecords();
 }
 
 
@@ -198,13 +182,11 @@ uint64_t CoreRecorder::cSimEnd(uint64_t curCycle) {
 
     DEBUG_MSG("[%s] Cycle %ld done state %d", name.c_str(), curCycle, state);
 
-    assert(lastEventSimulated);
-
     // Adjust curCycle to account for contention simulation delay
 
     // In our current clock, when did the last event start (1) before contention simulation, and (2) after contention simulation
-    uint64_t lastEvCycle1 = lastEventSimulated->origStartCycle + gapCycles; //we add gapCycles because origStartCycle is in zll clocks
-    uint64_t lastEvCycle2 = lastEventSimulated->startCycle;
+    uint64_t lastEvCycle1 = lastEventSimulatedOrigStartCycle + gapCycles; //we add gapCycles because origStartCycle is in zll clocks
+    uint64_t lastEvCycle2 = lastEventSimulatedStartCycle;
 
     assert(lastEvCycle1 <= curCycle);
     assert_msg(lastEvCycle2 <= curCycle, "[%s] lec2 %ld cc %ld, state %d", name.c_str(), lastEvCycle2, curCycle, state);
@@ -224,30 +206,24 @@ uint64_t CoreRecorder::cSimEnd(uint64_t curCycle) {
 
     /*DEBUG_MSG*/ //info("[%s] curCycle %ld zllCurCycle %ld lec1 %ld lec2 %ld skew %ld", name.c_str(), curCycle, curCycle-gapCycles, lastEvCycle1, lastEvCycle2, skew);
 
-    /* Advance the recorder: we set the current dead cycle as the last event's cycle,
-     * but we mark any live events with some slack (we need the slack to account for events
-     * that linger a bit longer).
-     */
-    //eventRecorder.advance(curCycle + zinfo->phaseLength + 10000 +100000, lastEvCycle2);
-    eventRecorder.advance(curCycle - gapCycles + zinfo->phaseLength, lastEventSimulated->origStartCycle);
-
-    if (!lastEventSimulated->getNumChildren()) {
+    if (!prevRespEvent) {
         //if we were RUNNING, the phase would have been tapered off
-        assert_msg(state == DRAINING, "[%s] state %d lastEventSimulated %p (startCycle %ld) curCycle %ld", name.c_str(), state, lastEventSimulated, lastEventSimulated->startCycle, curCycle);
-        assert(prevRespEvent == lastEventSimulated);
-        lastUnhaltedCycle = lastEventSimulated->startCycle; //the taper is a 0-delay event
-        assert(lastEventSimulated->getPostDelay() == 0);
+        assert_msg(state == DRAINING, "[%s] state %d lastEventSimulated startCycle %ld curCycle %ld", name.c_str(), state, lastEventSimulatedStartCycle, curCycle);
+        lastUnhaltedCycle = lastEventSimulatedStartCycle; //the taper is a 0-delay event
         state = HALTED;
-        DEBUG_MSG("[%s] lastEventSimulated reached (startCycle %ld), DRAINING -> HALTED", name.c_str(), lastEventSimulated->startCycle);
-
-        lastEventSimulated = NULL;
-        prevRespEvent = NULL;
+        DEBUG_MSG("[%s] lastEventSimulated reached (startCycle %ld), DRAINING -> HALTED", name.c_str(), lastEventSimulatedStartCycle);
     }
     return curCycle;
 }
 
 void CoreRecorder::reportEventSimulated(TimingCoreEvent* ev) {
-    lastEventSimulated = ev;
+    lastEventSimulatedStartCycle = ev->startCycle;
+    lastEventSimulatedOrigStartCycle = ev->origStartCycle;
+    if (unlikely(ev == prevRespEvent)) {
+        // This is the last event in the sequence
+        assert(state == DRAINING);
+        prevRespEvent = nullptr;
+    }
     eventRecorder.setStartSlack(ev->startCycle - ev->origStartCycle);
 }
 

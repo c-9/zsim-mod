@@ -31,8 +31,6 @@
 #include <string>
 #include <sys/time.h>
 #include <vector>
-#include <iterator>
-
 #include "cache.h"
 #include "cache_arrays.h"
 #include "config.h"
@@ -59,6 +57,7 @@
 #include "part_repl_policies.h"
 #include "pin_cmd.h"
 #include "prefetcher.h"
+#include "proc_stats.h"
 #include "process_stats.h"
 #include "process_tree.h"
 #include "profile_stats.h"
@@ -67,9 +66,12 @@
 #include "simple_core.h"
 #include "stats.h"
 #include "stats_filter.h"
+#include "str.h"
 #include "timing_cache.h"
 #include "timing_core.h"
 #include "timing_event.h"
+#include "trace_driver.h"
+#include "tracing_cache.h"
 #include "virt/port_virtualizer.h"
 #include "weave_md1_mem.h" //validation, could be taken out...
 #include "common/common_functions.h"
@@ -83,6 +85,7 @@
 #include "page-table/page_table.h"
 #include "page-table/reversed_page_table.h"
 #include "memory_hierarchy.h"
+#include "banshee/mc.h"
 #include "zsim.h"
 extern void EndOfPhaseActions(); //in zsim.cpp
 
@@ -291,6 +294,7 @@ BaseCache* BuildCacheBank(Config& config, const string& prefix, g_string& name, 
     info("Built L%d bank, %d bytes, %d lines, %d ways (%d candidates if array is Z), %s array, %s hash, %s replacement, accLat %d, invLat %d name %s",
             level, bankSize, numLines, ways, candidates, arrayType.c_str(), hashType.c_str(), replType.c_str(), accLat, invLat, name.c_str());
 #endif
+
     return cache;
 }
 
@@ -303,6 +307,30 @@ string replace(string s, const string& a, const string& b) {
   return s;
 }
 
+// NOTE: frequency is SYSTEM frequency; mem freq specified in tech
+DDRMemory* BuildDDRMemory(Config& config, uint32_t lineSize, uint32_t frequency, uint32_t domain, g_string name, const string& prefix) {
+    uint32_t ranksPerChannel = config.get<uint32_t>(prefix + "ranksPerChannel", 4);
+    uint32_t banksPerRank = config.get<uint32_t>(prefix + "banksPerRank", 8);  // DDR3 std is 8
+    uint32_t pageSize = config.get<uint32_t>(prefix + "pageSize", 8*1024);  // 1Kb cols, x4 devices
+    const char* tech = config.get<const char*>(prefix + "tech", "DDR3-1333-CL10");  // see cpp file for other techs
+    const char* addrMapping = config.get<const char*>(prefix + "addrMapping", "rank:col:bank");  // address splitter interleaves channels; row always on top
+
+    // If set, writes are deferred and bursted out to reduce WTR overheads
+    bool deferWrites = config.get<bool>(prefix + "deferWrites", true);
+    bool closedPage = config.get<bool>(prefix + "closedPage", true);
+
+    // Max row hits before we stop prioritizing further row hits to this bank.
+    // Balances throughput and fairness; 0 -> FCFS / high (e.g., -1) -> pure FR-FCFS
+    uint32_t maxRowHits = config.get<uint32_t>(prefix + "maxRowHits", 4);
+
+    // Request queues
+    uint32_t queueDepth = config.get<uint32_t>(prefix + "queueDepth", 16);
+    uint32_t controllerLatency = config.get<uint32_t>(prefix + "controllerLatency", 10);  // in system cycles
+
+    auto mem = new DDRMemory(zinfo->lineSize, pageSize, ranksPerChannel, banksPerRank, frequency, tech,
+            addrMapping, controllerLatency, queueDepth, maxRowHits, deferWrites, closedPage, domain, name);
+    return mem;
+}
 
 MemObject* BuildMemoryController(Config& config, uint32_t lineSize, uint32_t frequency, uint32_t domain, g_string& name) {
     //Type
@@ -311,12 +339,14 @@ MemObject* BuildMemoryController(Config& config, uint32_t lineSize, uint32_t fre
     //Latency
     uint32_t latency = (type == "DDR")? -1 : config.get<uint32_t>("sys.mem.latency", 100);
 
-    MemObject* mem = NULL;
+    MemObject* mem = nullptr;
 
 	//default memory_size is 16GB
     zinfo->memory_size += power(2,20)*config.get<uint32_t>("sys.mem.capacityMB", 16384);
     if (type == "Simple") {
-        mem = new SimpleMemory(latency, name);
+        mem = new SimpleMemory(latency, name, config);
+    } else if (type == "DramCache") {
+		mem = new MemoryController(name, frequency, domain, config);	
     } else if (type == "MD1") {
         // The following params are for MD1 only
         // NOTE: Frequency (in MHz) -- note this is a sys parameter (not sys.mem). There is an implicit assumption of having
@@ -324,6 +354,7 @@ MemObject* BuildMemoryController(Config& config, uint32_t lineSize, uint32_t fre
 
         // Peak bandwidth (in MB/s)
         uint32_t bandwidth = config.get<uint32_t>("sys.mem.bandwidth", 6400);
+
         mem = new MD1Memory(lineSize, frequency, bandwidth, latency, name);
     } else if (type == "WeaveMD1") {
         uint32_t bandwidth = config.get<uint32_t>("sys.mem.bandwidth", 6400);
@@ -331,27 +362,9 @@ MemObject* BuildMemoryController(Config& config, uint32_t lineSize, uint32_t fre
         mem = new WeaveMD1Memory(lineSize, frequency, bandwidth, latency, boundLatency, domain, name);
     } else if (type == "WeaveSimple") {
         uint32_t boundLatency = config.get<uint32_t>("sys.mem.boundLatency", 100);
-        mem = new WeaveSimpleMemory(latency, boundLatency, domain, name);
+        mem = new WeaveSimpleMemory(latency, boundLatency, domain, name, config);
     } else if (type == "DDR") {
-        uint32_t ranksPerChannel = config.get<uint32_t>("sys.mem.ranksPerChannel", 4);
-        uint32_t banksPerRank = config.get<uint32_t>("sys.mem.banksPerRank", 8);  // DDR3 std is 8
-        uint32_t pageSize = config.get<uint32_t>("sys.mem.pageSize", 8*1024);  // 1Kb cols, x4 devices
-        const char* tech = config.get<const char*>("sys.mem.tech", "DDR3-1333-CL10");  // see cpp file for other techs
-        const char* addrMapping = config.get<const char*>("sys.mem.addrMapping", "rank:col:bank");  // address splitter interleaves channels; row always on top
-
-        // If set, writes are deferred and bursted out to reduce WTR overheads
-        bool deferWrites = config.get<bool>("sys.mem.deferWrites", true);
-        bool closedPage = config.get<bool>("sys.mem.closedPage", true);
-
-        // Max row hits before we stop prioritizing further row hits to this bank.
-        // Balances throughput and fairness; 0 -> FCFS / high (e.g., -1) -> pure FR-FCFS
-        uint32_t maxRowHits = config.get<uint32_t>("sys.mem.maxRowHits", 4);
-
-        // Request queues
-        uint32_t queueDepth = config.get<uint32_t>("sys.mem.queueDepth", 16);
-        uint32_t controllerLatency = config.get<uint32_t>("sys.mem.controllerLatency", 10);  // in system cycles
-
-        mem = new DDRMemory(zinfo->lineSize, pageSize, ranksPerChannel, banksPerRank, frequency, tech,addrMapping, controllerLatency, queueDepth, maxRowHits, deferWrites, closedPage, domain, name);
+        mem = BuildDDRMemory(config, lineSize, frequency, domain, name, "sys.mem.");
     } else if (type == "DRAMSim") {
         uint64_t cpuFreqHz = 1000000 * frequency;
         uint32_t capacity = config.get<uint32_t>("sys.mem.capacityMB", 16384);
@@ -548,7 +561,7 @@ static void InitSystem(Config& config) {
     if (memControllers > 1) {
         bool splitAddrs = config.get<bool>("sys.mem.splitAddrs", true);
         if (splitAddrs) {
-            MemObject* splitter = new SplitAddrMemory(mems, "mem-splitter");
+            MemObject* splitter = new SplitAddrMemory(mems, "mem-splitter", config);
             mems.resize(1);
             mems[0] = splitter;
         }

@@ -41,6 +41,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <map>
+#include "access_tracing.h"
 #include "constants.h"
 #include "contention_sim.h"
 #include "core.h"
@@ -57,7 +58,7 @@
 #include "profile_stats.h"
 #include "scheduler.h"
 #include "stats.h"
-//#include "syscall_funcs.h"
+#include "trace_driver.h"
 #include "virt/virt.h"
 #include "virt/port_virtualizer.h"
 #include "nvmain_mem_ctrl.h"
@@ -1329,7 +1330,8 @@ VOID SimEnd() {
         zinfo->statsBackend->dump(false);
         zinfo->eventualStatsBackend->dump(false);
         zinfo->compactStatsBackend->dump(false);
-
+        for (AccessTraceWriter* t : *(zinfo->traceWriters)) t->dump(false);  // flushes trace writer
+        
         // Print NVMain internal stats
         info("Has nvmain %d, num memory controllers %d", zinfo->hasNVMain, zinfo->numMemoryControllers);
         if (zinfo->hasNVMain) {

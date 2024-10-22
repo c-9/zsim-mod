@@ -55,7 +55,8 @@ class CoreRecorder {
         EventRecorder eventRecorder;
         uint64_t prevRespCycle;
         TimingEvent* prevRespEvent;
-        TimingCoreEvent* lastEventSimulated;
+        uint64_t lastEventSimulatedStartCycle;
+        uint64_t lastEventSimulatedOrigStartCycle;
 
         //Cycle accounting
         uint64_t totalGapCycles; //does not include gapCycles
@@ -74,7 +75,7 @@ class CoreRecorder {
 
         //This better be inlined 100% of the time, it's called on EVERY access
         inline void record(uint64_t startCycle) {
-            if (unlikely(eventRecorder.numRecords())) recordAccess(startCycle);
+            if (unlikely(eventRecorder.hasRecord())) recordAccess(startCycle);
         }
 
         //Methods called between the bound and weave phases

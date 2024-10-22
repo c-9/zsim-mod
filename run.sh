@@ -1,7 +1,7 @@
 #!/bin/bash
 source ./env.sh
-#echo 2147483648000 > /proc/sys/kernel/shmmax
-sysctl -w kernel.shmmax=2147483648000
+#echo 18446744073692774399 > /proc/sys/kernel/shmmax
+sysctl -w kernel.shmmax=18446744073692774399
 sysctl -w kernel.yama.ptrace_scope=0
 
 ./bin/zsim tests/simple.cfg

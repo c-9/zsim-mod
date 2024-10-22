@@ -173,7 +173,7 @@ void MESIBottomCC::processWritebackOnAccess(Address lineAddr, uint32_t lineId, A
     }
 }
 
-void MESIBottomCC::processInval(Address lineAddr, uint32_t lineId, InvType type, bool* reqWriteback, uint32_t srcId, uint64_t cycle) {
+void MESIBottomCC::processInval(Address lineAddr, uint32_t lineId, InvType type, bool* reqWriteback) {
     MESIState* state = &array[lineId];
     //assert(*state != I);
 	if( *state != I)
@@ -251,7 +251,8 @@ uint64_t MESITopCC::sendInvalidates(Address lineAddr, uint32_t lineId, InvType t
 				int64_t line_id = tmp_cache->array->lookup(lineAddr, NULL, false);
 				if( line_id != -1)
 				{
-                uint64_t respCycle = children[c]->invalidate(lineAddr, type, reqWriteback, cycle, srcId);
+                InvReq req = {lineAddr, type, reqWriteback, cycle, srcId};
+                uint64_t respCycle = children[c]->invalidate(req);
                 respCycle += childrenRTTs[c];
                 maxCycle = MAX(respCycle, maxCycle);
                 if (type == INV) e->sharers[c] = false;

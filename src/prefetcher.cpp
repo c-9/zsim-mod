@@ -183,8 +183,7 @@ uint64_t StreamPrefetcher::access(MemReq& req) {
 }
 
 // nop for now; do we need to invalidate our own state?
-uint64_t StreamPrefetcher::invalidate(Address lineAddr, InvType type, bool* reqWriteback, uint64_t reqCycle, uint32_t srcId) {
-    return child->invalidate(lineAddr, type, reqWriteback, reqCycle, srcId);
+uint64_t StreamPrefetcher::invalidate(const InvReq& req) {
+    return child->invalidate(req);
 }
-
 
