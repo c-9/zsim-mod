@@ -36,8 +36,8 @@ def buildSim(cppFlags, dir, type, pgo=None):
     #env['CXX'] = 'g++ -flto -flto-report -fuse-linker-plugin'
     #env['CC'] = 'gcc -flto'
     #env["LINKFLAGS"] = " -O3 -finline "
-    env['CXX'] ='g++-4.8'
-    env['CC'] = 'g++-4.8'
+    env['CXX'] ='g++-4'
+    env['CC'] = 'g++-4'
     if useIcc:
         env['CC'] = 'icc'
         env['CXX'] = 'icpc -ipo'

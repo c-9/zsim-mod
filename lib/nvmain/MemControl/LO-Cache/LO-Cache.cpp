@@ -63,7 +63,6 @@ LO_Cache::LO_Cache( )
 	read_hit = 0;
 	write_hit=0;
     starvation_precharges = 0;
-
     perfectFills = false;
     max_addr = 0;
 

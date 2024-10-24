@@ -38,4 +38,4 @@ dlopen=''
 dlpreopen=''
 
 # Directory that this library needs to be installed in:
-libdir='/git-own/banshee/lib/libconfig-1.7.3/lib'
+libdir='/home/chunk/workspace/git/git-own/zsim-mod/lib/libconfig-1.7.3/lib'

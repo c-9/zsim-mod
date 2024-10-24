@@ -1,0 +1,3 @@
+Pin 2.14 kit 71293
+A:  Source/pin/elfio/img_elf.cpp: ProcessSectionHeaders: 670: unknown section type 19 for sec[43,.relr.dyn] in /lib64/ld-linux-x86-64.so.2
+

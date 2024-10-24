@@ -1,4 +1,4 @@
-prefix=/git-own/banshee/lib/libconfig-1.7.3
+prefix=/home/chunk/workspace/git/git-own/zsim-mod/lib/libconfig-1.7.3
 exec_prefix=${prefix}
 libdir=${exec_prefix}/lib
 includedir=${prefix}/include

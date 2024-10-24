@@ -24,16 +24,16 @@
  * this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "scheduler.h"
 #include <fstream>
+#include <regex>
 #include <sys/stat.h>
 #include "config.h" // for ParseList
 #include "pin.H"
 #include "process_tree.h"
 #include "profile_stats.h"
-#include "scheduler.h"
 #include "str.h"
 #include "virt/syscall_name.h"
-#include "boost/regex.hpp"
 
 //The scheduler class started simple, but at some point having it all in the header is too ridiculous. Migrate non perf-intensive calls here! (all but sync, really)
 
@@ -84,8 +84,8 @@ bool IsSleepingInFutex(uint32_t linuxPid, uint32_t linuxTid, uintptr_t futexAddr
     
     std::vector<std::string> argList = ParseList<std::string>(ss.str());
     bool match = argList.size() >= 2 &&
-        strtoul(argList[0].c_str(), NULL, 0) == SYS_futex &&
-        (uintptr_t)strtoul(argList[1].c_str(), NULL, 0) == futexAddr;
+        strtoul(argList[0].c_str(), nullptr, 0) == SYS_futex &&
+        (uintptr_t)strtoul(argList[1].c_str(), nullptr, 0) == futexAddr;
     //info("%s | %s | SYS_futex = %d futexAddr = 0x%lx | match = %d ", ss.str().c_str(), Str(argList).c_str(), SYS_futex, futexAddr, match);
     return match;
 }
@@ -140,8 +140,8 @@ void Scheduler::watchdogThreadFunc() {
                 uint32_t cid = th->cid;
 
                 const g_string& sbRegexStr = zinfo->procArray[pid]->getSyscallBlacklistRegex();
-                boost::regex sbRegex(sbRegexStr.c_str());
-                if (boost::regex_match(GetSyscallName(fl->syscallNumber), sbRegex)) {
+                std::regex sbRegex(sbRegexStr.c_str());
+                if (std::regex_match(GetSyscallName(fl->syscallNumber), sbRegex)) {
                     // If this is the last leave we catch, it is the culprit for sure -> blacklist it
                     // Over time, this will blacklist every blocking syscall
                     // The root reason for being conservative though is that we don't have a sure-fire
@@ -254,7 +254,7 @@ void Scheduler::threadTrampoline(void* arg) {
 }
 
 void Scheduler::startWatchdogThread() {
-    PIN_SpawnInternalThread(threadTrampoline, this, 64*1024, NULL);
+    PIN_SpawnInternalThread(threadTrampoline, this, 64*1024, nullptr);
 }
 
 
@@ -381,7 +381,7 @@ void Scheduler::finishFakeLeave(ThreadInfo* th) {
     FakeLeaveInfo* si = th->fakeLeave;
     fakeLeaves.remove(si);
     delete si;
-    assert(th->fakeLeave == NULL);
+    assert(th->fakeLeave == nullptr);
 }
 
 void Scheduler::waitUntilQueued(ThreadInfo* th) {
